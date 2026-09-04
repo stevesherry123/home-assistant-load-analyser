@@ -1,7 +1,10 @@
 import logging
 import unittest
+import sys
+from pathlib import Path
 
-from load_optimizer.app.observability import EventEngine
+sys.path.insert(0, str(Path(__file__).parents[1] / "custom_components" / "load_analyser"))
+from observability import EventEngine  # noqa: E402
 
 
 class ObservabilityTests(unittest.TestCase):

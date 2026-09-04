@@ -13,7 +13,6 @@
           "tariff_sensor": "Future tariff sensor (optional)"
         }
       }
-    },
-    "error": {}
+    }
   }
 }

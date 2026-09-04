@@ -1,0 +1,12 @@
+{
+  "domain": "load_analyser",
+  "name": "Load Analyser",
+  "version": "0.1.0",
+  "documentation": "https://github.com/stevesherry123/home-assistant-load-analyser",
+  "issue_tracker": "https://github.com/stevesherry123/home-assistant-load-analyser/issues",
+  "codeowners": ["@stevesherry123"],
+  "config_flow": true,
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "requirements": []
+}

@@ -13,7 +13,11 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_BLOCKED_WINDOW_ENTITY,
+    CONF_EARLIEST_START_ENTITY,
     CONF_ENERGY_SENSOR,
+    CONF_GREEN_WINDOW_ENTITY,
+    CONF_LATEST_FINISH_ENTITY,
     CONF_POWER_SENSOR,
     CONF_PROGRAM_SENSOR,
     CONF_STATE_SENSOR,
@@ -22,6 +26,7 @@ from .const import (
     DOMAIN,
 )
 from .costing import recommend_cycle, tariff_periods_from_entity
+from .legacy_runtime import blocked_windows_from_entity, datetime_from_entity_state, green_windows_from_entity, resolve_program_policies, schedule_advice
 
 LOGGER = logging.getLogger(__package__)
 STORAGE_VERSION = 1
@@ -170,19 +175,30 @@ class LoadAnalyserCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         models = self.persisted["program_models"]
         last = self.persisted.get("last_cycle") or {}
         recommendation = self._recommend(models, now)
+        advice = schedule_advice(
+            recommendation,
+            self.config,
+            now,
+            cycle_running=cycle is not None,
+            active_cycle_start=cycle.get("start") if cycle else None,
+        )
         return {
             "power": power,
+            "energy": energy,
             "cycle_state": "running" if cycle else "idle",
             "program": cycle.get("program") if cycle else program,
             "cycle_start": cycle.get("start") if cycle else None,
             "sample_count": len(cycle.get("samples", [])) if cycle else 0,
             "last_cycle": deepcopy(last),
+            "last_discarded_cycle": deepcopy(self.persisted.get("last_discarded_cycle") or {}),
+            "peak_power": max((_number(row.get("power_w")) or 0 for row in cycle.get("samples", [])), default=0) if cycle else 0,
             "total_runs": len(self.persisted["raw_cycles"]),
             "learned_programs": len(models),
             "program_models": deepcopy(models),
             "source_updated": power_state.last_updated.isoformat(),
             "data_quality": "measured",
             "recommendation": recommendation,
+            "schedule_advice": advice,
         }
 
     def _recommend(self, models: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -196,31 +212,42 @@ class LoadAnalyserCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 timezone_name=str(self.config.get("tariff_timezone", self.hass.config.time_zone)),
                 price_unit=str(self.config.get("tariff_price_unit", "p_per_kwh")),
             )
-            policies = [
-                {
-                    "program": model["program"],
-                    "enabled": True,
-                    "allow_normal_recommendation": True,
-                    "allow_negative_price_run": False,
-                    "classification": "unclassified",
-                    "preference_rank": 100,
-                    "minimum_hours_between_runs": 0,
-                    "maximum_runs_per_window": 0,
-                    "negative_price_priority": 0,
-                    "fixed_cost_pence": 0,
-                    "water_litres": 0,
-                    "water_cost_pence_per_litre": 0,
-                    "wear_cost_pence": 0,
-                }
-                for model in models.values()
-            ]
-            return recommend_cycle(
+            import json
+            configured_policies = json.loads(str(self.config.get("program_policies_json", "[]")))
+            policies = resolve_program_policies(models, configured_policies)
+            green_state = self._state(CONF_GREEN_WINDOW_ENTITY)
+            blocked_state = self._state(CONF_BLOCKED_WINDOW_ENTITY)
+            green_windows, _ = green_windows_from_entity(
+                {"state": green_state.state, "attributes": dict(green_state.attributes)} if green_state else None,
+                start=now, end=now + timedelta(hours=int(self.config.get("cost_search_hours", 24))),
+                naive_timezone=self.hass.config.time_zone,
+            )
+            blocked_windows, _ = blocked_windows_from_entity(
+                {"state": blocked_state.state, "attributes": dict(blocked_state.attributes)} if blocked_state else None,
+                start=now, end=now + timedelta(hours=int(self.config.get("cost_search_hours", 24))),
+                naive_timezone=self.hass.config.time_zone,
+            )
+            earliest_state = self._state(CONF_EARLIEST_START_ENTITY)
+            latest_state = self._state(CONF_LATEST_FINISH_ENTITY)
+            result = recommend_cycle(
                 list(models.values()), policies, periods,
                 reference_utc=now,
                 search_hours=int(self.config.get("cost_search_hours", 24)),
                 candidate_interval_minutes=int(self.config.get("cost_candidate_interval", 5)),
                 schedule_timezone=str(self.config.get("tariff_timezone", self.hass.config.time_zone)),
+                schedule_strategy=str(self.config.get("schedule_strategy", "cheapest_absolute")),
+                equivalent_cost_tolerance_pence=float(self.config.get("schedule_equivalent_cost_tolerance_pence", 0)),
+                preference_weight_pence=float(self.config.get("schedule_preference_weight_pence", 0.1)),
+                window_preference=str(self.config.get("schedule_window_preference", "any")),
+                overnight_start=str(self.config.get("schedule_overnight_start", "20:00")),
+                overnight_end=str(self.config.get("schedule_overnight_end", "08:00")),
+                earliest_start_utc=datetime_from_entity_state({"state": earliest_state.state} if earliest_state else None, naive_timezone=self.hass.config.time_zone),
+                latest_finish_utc=datetime_from_entity_state({"state": latest_state.state} if latest_state else None, naive_timezone=self.hass.config.time_zone),
+                green_windows=green_windows,
+                blocked_windows=blocked_windows,
             )
+            result["program_policies"] = policies
+            return result
         except (TypeError, ValueError, KeyError) as err:
             LOGGER.warning("Unable to calculate recommendation: %s", type(err).__name__)
             return {"status": "invalid", "reason": type(err).__name__}
@@ -292,3 +319,5 @@ class LoadAnalyserCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_seen": cycle["finish"],
             "data_quality": "measured",
         })
+    CONF_GREEN_WINDOW_ENTITY,
+    CONF_LATEST_FINISH_ENTITY,

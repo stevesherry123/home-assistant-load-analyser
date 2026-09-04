@@ -6,7 +6,11 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
 
-from .const import CONF_ENERGY_SENSOR, CONF_POWER_SENSOR, CONF_PROGRAM_SENSOR, CONF_STATE_SENSOR, CONF_TARIFF_SENSOR, DOMAIN
+from .const import (
+    CONF_BLOCKED_WINDOW_ENTITY, CONF_EARLIEST_START_ENTITY, CONF_ENERGY_SENSOR,
+    CONF_GREEN_WINDOW_ENTITY, CONF_LATEST_FINISH_ENTITY, CONF_POWER_SENSOR,
+    CONF_PROGRAM_SENSOR, CONF_STATE_SENSOR, CONF_TARIFF_SENSOR, DOMAIN,
+)
 
 class LoadAnalyserConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -24,6 +28,10 @@ class LoadAnalyserConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional(CONF_PROGRAM_SENSOR): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
             vol.Optional(CONF_STATE_SENSOR): selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "binary_sensor"])),
             vol.Optional(CONF_TARIFF_SENSOR): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+            vol.Optional(CONF_GREEN_WINDOW_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig()),
+            vol.Optional(CONF_BLOCKED_WINDOW_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig()),
+            vol.Optional(CONF_EARLIEST_START_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig()),
+            vol.Optional(CONF_LATEST_FINISH_ENTITY): selector.EntitySelector(selector.EntitySelectorConfig()),
         })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
@@ -51,5 +59,12 @@ class LoadAnalyserOptionsFlow(config_entries.OptionsFlow):
             vol.Optional("cost_candidate_interval", default=current.get("cost_candidate_interval", 5)): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
             vol.Optional("tariff_timezone", default=current.get("tariff_timezone", "Europe/London")): str,
             vol.Optional("tariff_price_unit", default=current.get("tariff_price_unit", "p_per_kwh")): selector.SelectSelector(selector.SelectSelectorConfig(options=["p_per_kwh", "gbp_per_kwh"])),
+            vol.Optional("schedule_strategy", default=current.get("schedule_strategy", "cheapest_absolute")): selector.SelectSelector(selector.SelectSelectorConfig(options=["cheapest_absolute", "cheapest_earliest_finish", "cheapest_latest_finish"])),
+            vol.Optional("schedule_window_preference", default=current.get("schedule_window_preference", "any")): selector.SelectSelector(selector.SelectSelectorConfig(options=["any", "overnight_only", "prefer_overnight", "daytime_only", "prefer_daytime"])),
+            vol.Optional("schedule_overnight_start", default=current.get("schedule_overnight_start", "20:00")): str,
+            vol.Optional("schedule_overnight_end", default=current.get("schedule_overnight_end", "08:00")): str,
+            vol.Optional("schedule_equivalent_cost_tolerance_pence", default=current.get("schedule_equivalent_cost_tolerance_pence", 0)): vol.Coerce(float),
+            vol.Optional("schedule_preference_weight_pence", default=current.get("schedule_preference_weight_pence", 0.1)): vol.Coerce(float),
+            vol.Optional("program_policies_json", default=current.get("program_policies_json", "[]")): str,
         })
         return self.async_show_form(step_id="init", data_schema=schema)
